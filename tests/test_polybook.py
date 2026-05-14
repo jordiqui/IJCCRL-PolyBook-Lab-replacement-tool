@@ -1,13 +1,19 @@
-import json
+import subprocess
+import sys
 from pathlib import Path
+
 import pytest
-from polybook import Record, parse_book, canonical_sort, analyze, merge_records, compare_books, START_KEY
+from polybook import Record, parse_book, canonical_sort, analyze, merge_records, compare_books, START_KEY, version_string
 
 
 def write_records(path, recs):
     with open(path, 'wb') as f:
         for r in recs:
             f.write(r.to_bytes())
+
+
+def run_cli(*args):
+    return subprocess.run([sys.executable, 'polybook.py', *args], capture_output=True, text=True)
 
 
 def test_parse_one_record(tmp_path):
@@ -62,7 +68,6 @@ def test_root_move_extraction():
 
 
 def test_legal_traversal_placeholder(tmp_path):
-    # current implementation reaches entries from start key deterministically
     recs = [Record(START_KEY, 10, 1, 0), Record(3, 20, 1, 0)]
     p = tmp_path/'b.bin'; write_records(p,recs)
     from polybook import eval_book
@@ -73,6 +78,60 @@ def test_legal_traversal_placeholder(tmp_path):
 
 
 def test_uci_cp_mate_parser_placeholder():
-    # placeholder parser behavior encoded in rows fields
     row = {"score_cp": 13, "mate": None}
     assert row['score_cp'] == 13 and row['mate'] is None
+
+
+def test_version_output():
+    r = run_cli('--version')
+    assert r.returncode == 0
+    assert version_string() in r.stdout
+
+
+def test_help_output_success():
+    r = run_cli('--help')
+    assert r.returncode == 0
+    assert 'inspect' in r.stdout
+
+
+def test_inspect_entrypoint_and_json(tmp_path):
+    b = tmp_path/'in.bin'; write_records(b, [Record(1,2,3,4)])
+    out = tmp_path/'reports'/'inspect.json'
+    r = run_cli('inspect', str(b), '--json', str(out))
+    assert r.returncode == 0
+    assert out.exists()
+
+
+def test_compare_entrypoint(tmp_path):
+    b1 = tmp_path/'a.bin'; b2 = tmp_path/'b.bin'
+    write_records(b1, [Record(1,2,3,4)])
+    write_records(b2, [Record(1,2,3,4), Record(5,6,7,8)])
+    out = tmp_path/'compare.json'
+    r = run_cli('compare', str(b1), str(b2), '--json', str(out))
+    assert r.returncode == 0
+    assert out.exists()
+
+
+def test_merge_writes_valid_output(tmp_path):
+    b1 = tmp_path/'a.bin'; b2 = tmp_path/'b.bin'
+    write_records(b1, [Record(1,2,3,4)])
+    write_records(b2, [Record(1,2,5,4)])
+    out = tmp_path/'books'/'merged.bin'
+    rpt = tmp_path/'reports'/'merge.json'
+    r = run_cli('merge', '-o', str(out), '--policy', 'aggregate-sum', str(b1), str(b2), '--json', str(rpt))
+    assert r.returncode == 0
+    assert out.exists() and out.stat().st_size % 16 == 0
+
+
+def test_malformed_input_exits_failure(tmp_path):
+    bad = tmp_path/'bad.bin'; bad.write_bytes(b'abc')
+    r = run_cli('inspect', str(bad), '--json', str(tmp_path/'x.json'))
+    assert r.returncode != 0
+    assert 'ERROR:' in r.stderr
+
+
+def test_launcher_docs_cli_alignment():
+    readme = Path('dist/README_EXECUTABLE.txt').read_text(encoding='utf-8')
+    assert 'ijccrl-polybook.exe inspect BOOK.bin --json report.json' in readme
+    assert 'ijccrl-polybook.exe compare OLD.bin NEW.bin --json report.json' in readme
+    assert 'ijccrl-polybook.exe merge -o OUT.bin --policy aggregate-sum BOOK1.bin BOOK2.bin --json merge_report.json' in readme
