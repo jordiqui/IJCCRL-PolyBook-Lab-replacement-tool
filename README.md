@@ -86,6 +86,18 @@ python polybook.py eval --book BOOK.bin --engine /path/to/stockfish --depth 8 --
 ```
 
 
-Dependency note: eval requires python-chess plus a UCI engine (`py -m pip install python-chess`).
+Dependency note: eval requires python-chess plus a UCI engine (`py -m pip install python-chess` on Windows, or `python -m pip install python-chess` on POSIX shells).
 inspect/compare/merge and top-level `--help`/`--version` do not require python-chess or Stockfish at CLI startup.
 Project tests use a deterministic fake UCI engine fixture (`tests/fixtures/fake_uci_engine.py`) and do not require Stockfish.
+
+
+## P2C eval runtime validation
+- inspect/compare/merge do not require python-chess or Stockfish at CLI startup.
+- eval requires python-chess and a UCI engine path.
+- Unit tests use `tests/fixtures/fake_uci_engine.py` (deterministic), not Stockfish.
+- Full P2C closure requires python-chess installed so eval tests run instead of skip.
+- Network-restricted/Codex environments may legitimately skip eval tests when python-chess cannot be installed.
+- `python validate_eval_runtime.py` is the authoritative dependency-present validation script (`validate_eval_runtime.bat` on Windows).
+- No `.bin` fixture is committed; tiny Polyglot books are generated at runtime in temporary directories.
+- Eval evidence is written as external JSONL/JSON files and does not mutate the input BIN.
+- Optional offline install flow: place `python_chess*.whl` into `wheelhouse/`, then run `python -m pip install --no-index --find-links wheelhouse -r requirements.txt`.
