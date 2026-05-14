@@ -156,7 +156,8 @@ def compare_books(old: List[Record], new: List[Record]) -> Dict:
 
 class UCIEngine:
     def __init__(self, path: str):
-        self.proc = subprocess.Popen([path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        cmd = [sys.executable, path] if Path(path).suffix.lower() == ".py" else [path]
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         self.id_name = None; self.id_author = None
 
     def send(self, cmd: str): self.proc.stdin.write(cmd + "\n"); self.proc.stdin.flush()
