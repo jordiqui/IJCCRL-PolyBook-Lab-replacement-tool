@@ -71,3 +71,20 @@ Windows launcher wrappers that call the executable directly:
 - `compare_books_exe.bat`
 - `merge_books_exe.bat`
 - `eval_book_exe.bat`
+
+
+## POLYBOOK-P2 eval pipeline
+- Polyglot keys are **not invertible** to FEN. Evaluation starts from `--seed-fen` (default: standard start FEN) and traverses legal book moves only.
+- `eval` writes deterministic JSONL evidence (`--output-jsonl`) plus deterministic summary JSON (`--json`).
+- `--dry-run` performs legal traversal/diagnostics without launching any UCI engine.
+- BIN books are never modified by default during eval.
+
+Example (Stockfish 18, depth 8):
+
+```bash
+python polybook.py eval --book BOOK.bin --engine /path/to/stockfish --depth 8 --threads 1 --hash 16 --max-ply 16 --max-positions 1000 --max-moves-per-position 8 --output-jsonl evals.jsonl --json eval_summary.json
+```
+
+
+Dependency note: eval requires python-chess (`py -m pip install python-chess`).
+inspect/compare/merge and top-level `--help`/`--version` do not require python-chess at CLI startup.

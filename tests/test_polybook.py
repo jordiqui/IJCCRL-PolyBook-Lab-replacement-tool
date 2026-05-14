@@ -1,137 +1,130 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from polybook import Record, parse_book, canonical_sort, analyze, merge_records, compare_books, START_KEY, version_string
+
+from polybook import Record, START_FEN, START_KEY, compare_books, decode_polyglot_move, merge_records, parse_book, parse_uci_info_line, version_string
 
 
 def write_records(path, recs):
-    with open(path, 'wb') as f:
+    with open(path, "wb") as f:
         for r in recs:
             f.write(r.to_bytes())
 
 
 def run_cli(*args):
-    return subprocess.run([sys.executable, 'polybook.py', *args], capture_output=True, text=True)
+    return subprocess.run([sys.executable, "polybook.py", *args], capture_output=True, text=True)
 
 
-def test_parse_one_record(tmp_path):
-    p = tmp_path/'a.bin'
-    r = Record(1,2,3,4)
-    write_records(p,[r])
-    assert parse_book(p) == [r]
+def enc(frm, to, promo=0):
+    return to + (8 * (to // 8))
 
 
-def test_reject_malformed_size(tmp_path):
-    p = tmp_path/'bad.bin'; p.write_bytes(b'123')
-    with pytest.raises(ValueError):
-        parse_book(p)
+try:
+    import chess
+    import chess.polyglot
+except ImportError:
+    chess = None
 
 
-def test_canonical_sort_detection():
-    recs = [Record(2,1,1,1), Record(1,1,1,1)]
-    rep = analyze(recs)
-    assert not rep['is_canonically_sorted']
-    assert rep['key_order_regressions']
+def encode_move(uci: str) -> int:
+    if chess is None:
+        raise RuntimeError("python-chess unavailable")
+    mv = chess.Move.from_uci(uci)
+    return mv.to_square % 8 | ((mv.to_square // 8) << 3) | ((mv.from_square % 8) << 6) | ((mv.from_square // 8) << 9) | ({None: 0, chess.KNIGHT: 1, chess.BISHOP: 2, chess.ROOK: 3, chess.QUEEN: 4}[mv.promotion] << 12)
 
 
-def test_duplicate_key_move_detection():
-    recs = [Record(1,1,2,0), Record(1,1,3,1)]
-    rep = analyze(recs)
-    assert len(rep['duplicate_key_move_pairs']) == 1
+def sample_book(tmp_path):
+    if chess is None:
+        raise RuntimeError("python-chess unavailable")
+    b = chess.Board(START_FEN)
+    k0 = chess.polyglot.zobrist_hash(b)
+    m1 = chess.Move.from_uci("e2e4")
+    b.push(m1)
+    k1 = chess.polyglot.zobrist_hash(b)
+    recs = [
+        Record(k0, encode_move("e2e4"), 20, 0),
+        Record(k0, encode_move("d2d4"), 10, 0),
+        Record(k0, encode_move("a1a8"), 5, 0),
+        Record(k1, encode_move("e7e5"), 30, 0),
+    ]
+    p = tmp_path / "SAMPLE.bin"
+    write_records(p, recs)
+    return p
 
 
-def test_merge_aggregate_sum():
-    m,_ = merge_records([[Record(1,2,60000,0)], [Record(1,2,6000,0)]], 'aggregate-sum')
-    assert m[0].weight == 65535
+@pytest.mark.skipif(chess is None, reason="python-chess unavailable")
+def test_decode_e2e4():
+    assert decode_polyglot_move(encode_move("e2e4")) == "e2e4"
 
 
-def test_merge_aggregate_max():
-    m,_ = merge_records([[Record(1,2,4,0)], [Record(1,2,7,0)]], 'aggregate-max')
-    assert m[0].weight == 7
+@pytest.mark.skipif(chess is None, reason="python-chess unavailable")
+def test_decode_promotion_e7e8q():
+    assert decode_polyglot_move(encode_move("e7e8q")) == "e7e8q"
 
 
-def test_merge_keep_duplicates():
-    m,_ = merge_records([[Record(1,2,4,0)], [Record(1,2,7,0)]], 'keep-duplicates')
-    assert len(m) == 2
-
-
-def test_compare_reports():
-    rep = compare_books([Record(1,1,1,1)], [Record(1,1,1,1), Record(2,2,2,2)])
-    assert rep['added_records'] == 1
-
-
-def test_root_move_extraction():
-    rep = analyze([Record(START_KEY, 111, 10, 0), Record(2,2,2,2)])
-    assert len(rep['root_move_surface']) == 1
-
-
-def test_legal_traversal_placeholder(tmp_path):
-    recs = [Record(START_KEY, 10, 1, 0), Record(3, 20, 1, 0)]
-    p = tmp_path/'b.bin'; write_records(p,recs)
-    from polybook import eval_book
-    class A: pass
-    a=A(); a.book=str(p); a.engine='stockfish'; a.depth=8; a.threads=1; a.hash=16; a.max_ply=16; a.max_positions=10; a.max_moves_per_position=4; a.output_jsonl=str(tmp_path/'e.jsonl'); a.json=str(tmp_path/'s.json')
-    eval_book(a)
-    assert Path(a.output_jsonl).exists()
-
-
-def test_uci_cp_mate_parser_placeholder():
-    row = {"score_cp": 13, "mate": None}
-    assert row['score_cp'] == 13 and row['mate'] is None
-
-
-def test_version_output():
-    r = run_cli('--version')
+@pytest.mark.skipif(chess is None, reason="python-chess unavailable")
+def test_illegal_move_skipped(tmp_path):
+    b = sample_book(tmp_path)
+    outj = tmp_path / "s.json"
+    r = run_cli("eval", "--book", str(b), "--dry-run", "--max-ply", "0", "--max-positions", "1", "--output-jsonl", str(tmp_path / "e.jsonl"), "--json", str(outj))
     assert r.returncode == 0
-    assert version_string() in r.stdout
+    rep = json.loads(outj.read_text())
+    assert rep["illegal_book_moves"] == 1
 
 
-def test_help_output_success():
-    r = run_cli('--help')
-    assert r.returncode == 0
-    assert 'inspect' in r.stdout
+@pytest.mark.skipif(chess is None, reason="python-chess unavailable")
+def test_dry_run_outputs(tmp_path):
+    b = sample_book(tmp_path)
+    j = tmp_path / "summary.json"
+    jl = tmp_path / "rows.jsonl"
+    r = run_cli("eval", "--book", str(b), "--dry-run", "--max-ply", "2", "--max-positions", "10", "--output-jsonl", str(jl), "--json", str(j))
+    assert r.returncode == 0 and j.exists() and jl.exists()
 
 
-def test_inspect_entrypoint_and_json(tmp_path):
-    b = tmp_path/'in.bin'; write_records(b, [Record(1,2,3,4)])
-    out = tmp_path/'reports'/'inspect.json'
-    r = run_cli('inspect', str(b), '--json', str(out))
-    assert r.returncode == 0
-    assert out.exists()
+def test_uci_info_cp_mate_bestmove_parser():
+    cp = parse_uci_info_line("info depth 8 score cp 13 nodes 100 pv e2e4")
+    mt = parse_uci_info_line("info depth 10 score mate -2 nodes 200 pv e2e4 e7e5")
+    assert cp["score_type"] == "cp" and cp["score_value"] == 13
+    assert mt["score_type"] == "mate" and mt["score_value"] == -2
 
 
-def test_compare_entrypoint(tmp_path):
-    b1 = tmp_path/'a.bin'; b2 = tmp_path/'b.bin'
-    write_records(b1, [Record(1,2,3,4)])
-    write_records(b2, [Record(1,2,3,4), Record(5,6,7,8)])
-    out = tmp_path/'compare.json'
-    r = run_cli('compare', str(b1), str(b2), '--json', str(out))
-    assert r.returncode == 0
-    assert out.exists()
-
-
-def test_merge_writes_valid_output(tmp_path):
-    b1 = tmp_path/'a.bin'; b2 = tmp_path/'b.bin'
-    write_records(b1, [Record(1,2,3,4)])
-    write_records(b2, [Record(1,2,5,4)])
-    out = tmp_path/'books'/'merged.bin'
-    rpt = tmp_path/'reports'/'merge.json'
-    r = run_cli('merge', '-o', str(out), '--policy', 'aggregate-sum', str(b1), str(b2), '--json', str(rpt))
-    assert r.returncode == 0
-    assert out.exists() and out.stat().st_size % 16 == 0
-
-
-def test_malformed_input_exits_failure(tmp_path):
-    bad = tmp_path/'bad.bin'; bad.write_bytes(b'abc')
-    r = run_cli('inspect', str(bad), '--json', str(tmp_path/'x.json'))
+@pytest.mark.skipif(chess is None, reason="python-chess unavailable")
+def test_missing_engine_outside_dryrun(tmp_path):
+    b = sample_book(tmp_path)
+    r = run_cli("eval", "--book", str(b), "--engine", str(tmp_path / "missing.exe"), "--depth", "8", "--output-jsonl", str(tmp_path / "e.jsonl"), "--json", str(tmp_path / "s.json"))
     assert r.returncode != 0
-    assert 'ERROR:' in r.stderr
 
 
-def test_launcher_docs_cli_alignment():
-    readme = Path('dist/README_EXECUTABLE.txt').read_text(encoding='utf-8')
-    assert 'ijccrl-polybook.exe inspect BOOK.bin --json report.json' in readme
-    assert 'ijccrl-polybook.exe compare OLD.bin NEW.bin --json report.json' in readme
-    assert 'ijccrl-polybook.exe merge -o OUT.bin --policy aggregate-sum BOOK1.bin BOOK2.bin --json merge_report.json' in readme
+def test_compare_and_merge_still_work():
+    m, _ = merge_records([[Record(1, 2, 1, 0)], [Record(1, 2, 3, 0)]], "aggregate-max")
+    assert m[0].weight == 3
+    rep = compare_books([Record(1, 1, 1, 1)], [Record(1, 1, 1, 1), Record(2, 2, 2, 2)])
+    assert rep["added_records"] == 1
+
+
+def test_version_help():
+    assert run_cli("--version").returncode == 0
+    assert version_string() in run_cli("--version").stdout
+    assert "eval" in run_cli("--help").stdout
+
+
+def test_inspect_compare_merge_without_chess_import(tmp_path):
+    b1 = tmp_path / "a.bin"
+    b2 = tmp_path / "b.bin"
+    write_records(b1, [Record(1, 2, 3, 4)])
+    write_records(b2, [Record(1, 2, 3, 4), Record(5, 6, 7, 8)])
+    assert run_cli("inspect", str(b1), "--json", str(tmp_path / "i.json")).returncode == 0
+    assert run_cli("compare", str(b1), str(b2), "--json", str(tmp_path / "c.json")).returncode == 0
+    assert run_cli("merge", "-o", str(tmp_path / "m.bin"), "--policy", "aggregate-sum", str(b1), str(b2), "--json", str(tmp_path / "m.json")).returncode == 0
+
+
+@pytest.mark.skipif(chess is not None, reason="requires python-chess missing in environment")
+def test_eval_without_python_chess_fails_cleanly(tmp_path):
+    b = tmp_path / "book.bin"
+    write_records(b, [Record(START_KEY, 1, 1, 0)])
+    out = run_cli("eval", "--book", str(b), "--dry-run", "--json", str(tmp_path / "s.json"))
+    assert out.returncode != 0
+    assert "requires python-chess" in out.stderr

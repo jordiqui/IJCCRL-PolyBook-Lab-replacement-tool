@@ -40,3 +40,14 @@ Release folder layout:
 Why replace, not patch, poly17:
 - Clean-room replacement keeps behavior auditable, reproducible, and maintainable.
 - No reverse engineering or binary patching of legacy executables.
+
+
+POLYBOOK-P2 eval notes:
+- Keys cannot be inverted to FEN; eval traverses legally from seed FEN(s).
+- Use --dry-run for traversal-only evidence/summary output.
+- BIN is not modified by default.
+- Example: ijccrl-polybook.exe eval --book BOOK.bin --engine C:\path\stockfish.exe --depth 8 --threads 1 --hash 16 --max-ply 16 --max-positions 1000 --max-moves-per-position 8 --output-jsonl evals.jsonl --json eval_summary.json
+
+
+Dependency note: eval requires python-chess (`py -m pip install python-chess`).
+inspect/compare/merge and top-level `--help`/`--version` do not require python-chess at CLI startup.
