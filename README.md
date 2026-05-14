@@ -56,3 +56,18 @@ Covers parser correctness, malformed-size rejection, canonical sorting checks, d
 ## Additional docs
 - `JSON_SCHEMA.md`
 - `MIGRATION_NOTE.md`
+
+
+## Windows executable build (POLYBOOK-P1)
+
+```bat
+build_exe.bat
+```
+
+This produces `dist/ijccrl-polybook.exe` and release folders (`dist/examples`, `dist/reports`, `dist/books`) plus `dist/README_EXECUTABLE.txt`.
+
+Windows launcher wrappers that call the executable directly:
+- `inspect_book_exe.bat`
+- `compare_books_exe.bat`
+- `merge_books_exe.bat`
+- `eval_book_exe.bat`
