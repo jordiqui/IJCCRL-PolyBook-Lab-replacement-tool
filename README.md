@@ -86,5 +86,6 @@ python polybook.py eval --book BOOK.bin --engine /path/to/stockfish --depth 8 --
 ```
 
 
-Dependency note: eval requires python-chess (`py -m pip install python-chess`).
-inspect/compare/merge and top-level `--help`/`--version` do not require python-chess at CLI startup.
+Dependency note: eval requires python-chess plus a UCI engine (`py -m pip install python-chess`).
+inspect/compare/merge and top-level `--help`/`--version` do not require python-chess or Stockfish at CLI startup.
+Project tests use a deterministic fake UCI engine fixture (`tests/fixtures/fake_uci_engine.py`) and do not require Stockfish.

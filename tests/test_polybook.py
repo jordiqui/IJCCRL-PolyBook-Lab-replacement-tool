@@ -1,6 +1,8 @@
 import json
 import subprocess
 import sys
+import hashlib
+import struct
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,9 @@ try:
     import chess.polyglot
 except ImportError:
     chess = None
+
+FIXTURES = Path("tests/fixtures")
+FAKE_ENGINE = FIXTURES / "fake_uci_engine.py"
 
 
 def encode_move(uci: str) -> int:
@@ -55,6 +60,43 @@ def sample_book(tmp_path):
     return p
 
 
+def encode_polyglot_move(from_square: int, to_square: int, promotion: int = 0) -> int:
+    return (
+        (to_square % 8)
+        | ((to_square // 8) << 3)
+        | ((from_square % 8) << 6)
+        | ((from_square // 8) << 9)
+        | (promotion << 12)
+    )
+
+
+def write_polyglot_record(handle, key: int, move: int, weight: int, learn: int = 0) -> None:
+    handle.write(struct.pack(">QHHI", key, move, weight, learn))
+
+
+def make_tiny_book(tmp_path: Path) -> Path:
+    if chess is None:
+        raise RuntimeError("python-chess unavailable")
+    board = chess.Board(START_FEN)
+    key = chess.polyglot.zobrist_hash(board)
+    e2e4 = encode_polyglot_move(chess.E2, chess.E4)
+    d2d4 = encode_polyglot_move(chess.D2, chess.D4)
+    illegal = encode_polyglot_move(chess.A1, chess.A8)
+    records = sorted(
+        [
+            (key, e2e4, 20, 0),
+            (key, d2d4, 10, 0),
+            (key, illegal, 5, 0),
+        ],
+        key=lambda r: (r[0], r[1], r[2], r[3]),
+    )
+    book_path = tmp_path / "tiny_opening.bin"
+    with book_path.open("wb") as handle:
+        for rec in records:
+            write_polyglot_record(handle, *rec)
+    return book_path
+
+
 @pytest.mark.skipif(chess is None, reason="python-chess unavailable")
 def test_decode_e2e4():
     assert decode_polyglot_move(encode_move("e2e4")) == "e2e4"
@@ -77,11 +119,13 @@ def test_illegal_move_skipped(tmp_path):
 
 @pytest.mark.skipif(chess is None, reason="python-chess unavailable")
 def test_dry_run_outputs(tmp_path):
-    b = sample_book(tmp_path)
+    b = make_tiny_book(tmp_path)
     j = tmp_path / "summary.json"
     jl = tmp_path / "rows.jsonl"
     r = run_cli("eval", "--book", str(b), "--dry-run", "--max-ply", "2", "--max-positions", "10", "--output-jsonl", str(jl), "--json", str(j))
     assert r.returncode == 0 and j.exists() and jl.exists()
+    rows = [json.loads(line) for line in jl.read_text().splitlines()]
+    assert rows and rows[0]["row_type"] == "candidate_move_eval"
 
 
 def test_uci_info_cp_mate_bestmove_parser():
@@ -93,9 +137,39 @@ def test_uci_info_cp_mate_bestmove_parser():
 
 @pytest.mark.skipif(chess is None, reason="python-chess unavailable")
 def test_missing_engine_outside_dryrun(tmp_path):
-    b = sample_book(tmp_path)
+    b = make_tiny_book(tmp_path)
     r = run_cli("eval", "--book", str(b), "--engine", str(tmp_path / "missing.exe"), "--depth", "8", "--output-jsonl", str(tmp_path / "e.jsonl"), "--json", str(tmp_path / "s.json"))
     assert r.returncode != 0
+
+
+@pytest.mark.skipif(chess is None, reason="python-chess unavailable")
+def test_eval_with_fake_engine_end_to_end(tmp_path):
+    book = make_tiny_book(tmp_path)
+    jl = tmp_path / "eval.jsonl"
+    js = tmp_path / "summary.json"
+    before = hashlib.sha256(book.read_bytes()).hexdigest()
+    r = run_cli(
+        "eval", "--book", str(book), "--engine", str(FAKE_ENGINE), "--depth", "8",
+        "--threads", "1", "--hash", "16", "--max-ply", "2", "--max-positions", "10",
+        "--max-moves-per-position", "2", "--output-jsonl", str(jl), "--json", str(js),
+    )
+    assert r.returncode == 0
+    rows = [json.loads(line) for line in jl.read_text().splitlines()]
+    assert rows and all(row["row_type"] == "candidate_move_eval" for row in rows)
+    assert all(row["score_type"] == "cp" and row["score_value"] == 23 for row in rows)
+    assert all(row["bestmove"] == "e2e4" for row in rows)
+    assert all("e2e4 e7e5" in row.get("pv", "") for row in rows)
+    assert all(row["engine_id_name"] == "IJCCRL Fake UCI Engine" for row in rows)
+    assert all(row["engine_id_author"] == "IJCCRL Test Harness" for row in rows)
+    assert [row["move_uci"] for row in rows] == ["e2e4", "d2d4"]
+    summary = json.loads(js.read_text())
+    assert summary["evaluated_candidate_moves"] == 2
+    assert summary["reachable_positions"] == 3
+    assert summary["illegal_book_moves"] == 1
+    assert summary["warnings"] == []
+    assert summary["exit_status"] == "ok"
+    after = hashlib.sha256(book.read_bytes()).hexdigest()
+    assert before == after
 
 
 def test_compare_and_merge_still_work():

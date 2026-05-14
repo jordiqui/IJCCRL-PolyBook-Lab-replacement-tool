@@ -49,5 +49,6 @@ POLYBOOK-P2 eval notes:
 - Example: ijccrl-polybook.exe eval --book BOOK.bin --engine C:\path\stockfish.exe --depth 8 --threads 1 --hash 16 --max-ply 16 --max-positions 1000 --max-moves-per-position 8 --output-jsonl evals.jsonl --json eval_summary.json
 
 
-Dependency note: eval requires python-chess (`py -m pip install python-chess`).
-inspect/compare/merge and top-level `--help`/`--version` do not require python-chess at CLI startup.
+Dependency note: eval requires python-chess plus a UCI engine (`py -m pip install python-chess`).
+inspect/compare/merge and top-level `--help`/`--version` do not require python-chess or Stockfish at CLI startup.
+Project tests validate eval using a deterministic fake UCI engine and do not require Stockfish.
